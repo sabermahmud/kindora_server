@@ -1,37 +1,48 @@
-
 import express from "express";
 import cors from "cors";
 import { MongoClient } from "mongodb";
 import "dotenv/config";
 
-// Express setup
 const app = express();
-const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(
   cors({
     origin: process.env.CLIENT_URL || "http://localhost:3000",
-  })
+    credentials: true,
+  }),
 );
+
 app.use(express.json());
 
-// MongoDB setup
-const client = new MongoClient(process.env.MONGODB_URI);
+// MongoDB connection
+let client;
+let clientPromise;
 
-let db;
+const getDatabase = async () => {
+  if (!process.env.MONGODB_URI) {
+    throw new Error("MONGODB_URI is not configured.");
+  }
 
-const connectToMongoDB = async () => {
-  await client.connect();
+  if (!client) {
+    client = new MongoClient(process.env.MONGODB_URI);
+  }
 
-  db = client.db("kindora");
+  if (!clientPromise) {
+    clientPromise = client.connect().catch((error) => {
+      clientPromise = null;
+      throw error;
+    });
+  }
 
-  console.log("Successfully connected to MongoDB!");
+  await clientPromise;
+
+  return client.db("kindora");
 };
 
 // Root route
 app.get("/", (req, res) => {
-  res.status(200).send({
+  res.status(200).json({
     success: true,
     message: "Kindora server is running!",
   });
@@ -40,70 +51,64 @@ app.get("/", (req, res) => {
 // Create Event API
 app.post("/create-event", async (req, res) => {
   try {
-    // 1. Receive data
     const event = req.body;
 
-    // 2. Validate request body
     if (
       !event ||
       typeof event !== "object" ||
       Array.isArray(event) ||
       Object.keys(event).length === 0
     ) {
-      return res.status(400).send({
+      return res.status(400).json({
         success: false,
         message: "Valid event data is required.",
       });
     }
 
-    // 3. Select collection
+    const db = await getDatabase();
     const collection = db.collection("events");
 
-    // 4. Insert document
+    const now = new Date();
+
     const result = await collection.insertOne({
       ...event,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     });
 
-    // 5. Send success response
-    return res.status(201).send({
+    return res.status(201).json({
       success: true,
       message: "Event created successfully!",
       insertedId: result.insertedId,
     });
-
   } catch (error) {
     console.error("Create event error:", error);
 
-    return res.status(500).send({
+    return res.status(500).json({
       success: false,
       message: "Internal server error. Failed to create event.",
     });
   }
 });
 
-app.get("/upcoming-events",async(req, res) => {
-  const collection = db.collection("events");
-  const result = await collection.find().toArray();
-  res.send(result)
-})
-
-// Start server
-const startServer = async () => {
+// Upcoming Events API
+app.get("/upcoming-events", async (req, res) => {
   try {
-    await connectToMongoDB();
+    const db = await getDatabase();
+    const collection = db.collection("events");
 
-    app.listen(port, () => {
-      console.log(`Kindora server is running on port: ${port}`);
-    });
+    const result = await collection.find().toArray();
+
+    return res.status(200).json(result);
   } catch (error) {
-    console.error("Server startup failed:", error);
+    console.error("Upcoming events error:", error);
 
-    await client.close().catch(() => {});
-
-    process.exit(1);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch upcoming events.",
+    });
   }
-};
+});
 
-startServer();
+// Export app for Vercel
+export default app;
