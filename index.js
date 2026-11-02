@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { MongoClient } from "mongodb";
 import "dotenv/config";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const PORT = process.env.PORT || 5000;
 const app = express();
@@ -49,6 +50,28 @@ app.get("/", (req, res) => {
   });
 });
 
+const verifyToken = async (req, res, next) => {
+  const authToken = req.headers.authorization;
+  console.log(authToken)
+  if (!authToken) {
+    return (res.status(401).send({ msg: "unAuthorized" }));
+  }
+  const token = authToken.split(" ")[1]
+  if(!token){
+    return (res.status(401).send({ msg: "unAuthorized" }));
+  }
+  const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`))
+  try {
+    const {payload} = await jwtVerify(token, JWKS)
+    next()
+  } catch (error) {
+    return res.status(500).send({msg:"server error"})
+  }
+ 
+
+  
+};
+
 // Create Event API
 app.post("/create-event", async (req, res) => {
   try {
@@ -93,13 +116,8 @@ app.post("/create-event", async (req, res) => {
 });
 
 // Upcoming Events API
-app.get("/upcoming-events", async (req, res) => {
+app.get("/upcoming-events", verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization;
-    console.log(token);
-    if(!token){
-      return res.send('unAuthorized')
-    }
     const db = await getDatabase();
     const collection = db.collection("events");
 
@@ -115,7 +133,6 @@ app.get("/upcoming-events", async (req, res) => {
     });
   }
 });
-
 
 app.listen(PORT, () => {
   console.log(`Kindora server running on port ${PORT}`);
