@@ -3,6 +3,7 @@ import cors from "cors";
 import { MongoClient } from "mongodb";
 import "dotenv/config";
 
+const PORT = process.env.PORT || 5000;
 const app = express();
 
 // Middleware
@@ -15,7 +16,7 @@ app.use(
 
 app.use(express.json());
 
-// MongoDB connection
+// // MongoDB connection
 let client;
 let clientPromise;
 
@@ -94,6 +95,11 @@ app.post("/create-event", async (req, res) => {
 // Upcoming Events API
 app.get("/upcoming-events", async (req, res) => {
   try {
+    const token = req.headers.authorization;
+    console.log(token);
+    if(!token){
+      return res.send('unAuthorized')
+    }
     const db = await getDatabase();
     const collection = db.collection("events");
 
@@ -108,6 +114,11 @@ app.get("/upcoming-events", async (req, res) => {
       message: "Failed to fetch upcoming events.",
     });
   }
+});
+
+
+app.listen(PORT, () => {
+  console.log(`Kindora server running on port ${PORT}`);
 });
 
 // Export app for Vercel
