@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
@@ -17,7 +17,7 @@ app.use(
 
 app.use(express.json());
 
-// // MongoDB connection
+// MongoDB connection
 let client;
 let clientPromise;
 
@@ -50,32 +50,51 @@ app.get("/", (req, res) => {
   });
 });
 
-const verifyToken = async (req, res, next) => {
-  const authToken = req.headers.authorization;
-  console.log(authToken)
-  if (!authToken) {
-    return (res.status(401).send({ msg: "unAuthorized" }));
-  }
-  const token = authToken.split(" ")[1]
-  if(!token){
-    return (res.status(401).send({ msg: "unAuthorized" }));
-  }
-  const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`))
-  try {
-    const {payload} = await jwtVerify(token, JWKS)
-    next()
-  } catch (error) {
-    return res.status(500).send({msg:"server error"})
-  }
- 
 
-  
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).send({
+      msg: "Unauthorized",
+    });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const JWKS = createRemoteJWKSet(
+      new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+    );
+
+    const { payload } = await jwtVerify(token, JWKS);
+
+    req.user = payload;
+
+    next();
+  } catch (error) {
+    console.error("JWT verification failed:", error);
+
+    return res.status(401).send({
+      msg: "Invalid token",
+    });
+  }
 };
 
+
 // Create Event API
-app.post("/create-event", async (req, res) => {
+app.post("/create-event", verifyToken, async (req, res) => {
   try {
     const event = req.body;
+    const userId = req.user?.id || req.user?.userId;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User not identified.",
+      });
+    }
 
     if (
       !event ||
@@ -96,6 +115,7 @@ app.post("/create-event", async (req, res) => {
 
     const result = await collection.insertOne({
       ...event,
+      createdBy: userId,
       createdAt: now,
       updatedAt: now,
     });
@@ -115,24 +135,38 @@ app.post("/create-event", async (req, res) => {
   }
 });
 
-// Upcoming Events API
+// Upcoming Events API (Public)
+
 app.get("/upcoming-events", verifyToken, async (req, res) => {
   try {
     const db = await getDatabase();
     const collection = db.collection("events");
 
-    const result = await collection.find().toArray();
+    const now = new Date();
 
-    return res.status(200).json(result);
+    const events = await collection
+      .find({
+        startDate: { $gte: now.toISOString() },
+      })
+      .sort({ startDate: 1 })
+      .toArray();
+
+    res.status(200).send(events);
   } catch (error) {
     console.error("Upcoming events error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch upcoming events.",
+    res.status(500).send({
+      msg: "Failed to fetch upcoming events",
     });
   }
 });
+
+
+
+
+
+
+
 
 app.listen(PORT, () => {
   console.log(`Kindora server running on port ${PORT}`);
