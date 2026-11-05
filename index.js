@@ -1,3 +1,4 @@
+
 import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
@@ -17,7 +18,7 @@ app.use(
 
 app.use(express.json());
 
-// MongoDB connection
+// MongoDB Connection
 let client;
 let clientPromise;
 
@@ -42,7 +43,7 @@ const getDatabase = async () => {
   return client.db("kindora");
 };
 
-// Root route
+// Root Route
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
@@ -50,43 +51,48 @@ app.get("/", (req, res) => {
   });
 });
 
-
-
+// JWT Verification Middleware
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).send({
-      msg: "Unauthorized",
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized",
     });
   }
 
   const token = authHeader.split(" ")[1];
 
   try {
+    if (!process.env.CLIENT_URL) {
+      throw new Error("CLIENT_URL is not configured.");
+    }
+
     const JWKS = createRemoteJWKSet(
-      new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
+      new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
     );
 
     const { payload } = await jwtVerify(token, JWKS);
 
     req.user = payload;
 
-    next();
+    return next();
   } catch (error) {
     console.error("JWT verification failed:", error);
 
-    return res.status(401).send({
-      msg: "Invalid token",
+    return res.status(401).json({
+      success: false,
+      message: "Invalid token",
     });
   }
 };
 
-
-// Create Event API
+// Create Event API (Protected)
 app.post("/create-event", verifyToken, async (req, res) => {
   try {
     const event = req.body;
+
     const userId = req.user?.id || req.user?.userId;
 
     if (!userId) {
@@ -136,8 +142,7 @@ app.post("/create-event", verifyToken, async (req, res) => {
 });
 
 // Upcoming Events API (Public)
-
-app.get("/upcoming-events", verifyToken, async (req, res) => {
+app.get("/upcoming-events",verifyToken, async (req, res) => {
   try {
     const db = await getDatabase();
     const collection = db.collection("events");
@@ -151,26 +156,60 @@ app.get("/upcoming-events", verifyToken, async (req, res) => {
       .sort({ startDate: 1 })
       .toArray();
 
-    res.status(200).send(events);
+    return res.status(200).json(events);
   } catch (error) {
     console.error("Upcoming events error:", error);
 
-    res.status(500).send({
-      msg: "Failed to fetch upcoming events",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch upcoming events",
     });
   }
 });
 
+// Get Event Details (Public)
+app.get("/event/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid event ID.",
+      });
+    }
 
+    const db = await getDatabase();
+    const collection = db.collection("events");
 
+    const event = await collection.findOne({
+      _id: new ObjectId(id),
+    });
 
+    if (!event) {
+      return res.status(404).json({
+        success: false,
+        message: "Event not found.",
+      });
+    }
 
+    return res.status(200).json(event);
+  } catch (error) {
+    console.error("Event details error:", error);
 
-
-app.listen(PORT, () => {
-  console.log(`Kindora server running on port ${PORT}`);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch event details.",
+    });
+  }
 });
 
-// Export app for Vercel
+// Local Development Server
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`Kindora server running on port ${PORT}`);
+  });
+}
+
+// Export for Vercel
 export default app;
